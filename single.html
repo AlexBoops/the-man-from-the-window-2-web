@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en-us">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+  <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, user-scalable=no, shrink-to-fit=yes">
+  <title>Google Docs</title>
+  <link rel="icon" href="https://ssl.gstatic.com/docs/documents/images/kix-favicon7.ico">
+  <link href="https://fonts.googleapis.com/css2?family=Audiowide&display=swap" rel="stylesheet">
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+      color: #fff;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      user-select: none;
+    }
+
+    #unity-container {
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      background: #000;
+    }
+
+    #unity-canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      background: #000;
+      outline: none;
+    }
+
+    #hud-bar {
+      position: fixed;
+      top: 12px;
+      right: 12px;
+      display: flex;
+      gap: 8px;
+      z-index: 999999;
+      opacity: 0.45;
+      transition: opacity 0.2s ease;
+    }
+
+    #hud-bar:hover {
+      opacity: 1;
+    }
+
+    .hud-btn {
+      background-color: #111;
+      color: #fff;
+      border: 2px solid #dc2626;
+      font-size: 11px;
+      font-family: 'Audiowide', sans-serif;
+      padding: 6px 12px;
+      cursor: pointer;
+      border-radius: 6px;
+      letter-spacing: 0.8px;
+      box-shadow: 0 0 8px rgba(220, 38, 38, 0.45);
+      transition: all 0.2s ease;
+    }
+
+    .hud-btn:hover {
+      background: #dc2626;
+      color: #fff;
+      box-shadow: 0 0 14px #dc2626;
+    }
+
+    #unity-loading-bar {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0, 0, 0, 0.94);
+      z-index: 20;
+      padding: 20px;
+      text-align: center;
+      transition: opacity 0.3s ease;
+    }
+
+    #loader-title {
+      font-family: 'Audiowide', sans-serif;
+      font-size: 26px;
+      letter-spacing: 2px;
+      color: #ef4444;
+      text-shadow: 0 0 12px rgba(239, 68, 68, 0.45);
+      margin-bottom: 6px;
+    }
+
+    #loader-sub {
+      font-size: 13px;
+      color: #9ca3af;
+      margin-bottom: 22px;
+    }
+
+    #unity-progress-bar-empty {
+      width: min(440px, 84vw);
+      height: 14px;
+      background: #1a1a1a;
+      border: 2px solid #dc2626;
+      border-radius: 999px;
+      overflow: hidden;
+      box-shadow: 0 0 12px rgba(220, 38, 38, 0.25);
+    }
+
+    #unity-progress-bar-full {
+      width: 0%;
+      height: 100%;
+      background: linear-gradient(90deg, #991b1b, #ef4444);
+      transition: width 0.12s ease-out;
+    }
+
+    #loader-status {
+      margin-top: 10px;
+      font-size: 12px;
+      font-family: monospace;
+      color: #d1d5db;
+    }
+
+    #unity-warning {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 30;
+      display: none;
+      font-size: 13px;
+    }
+
+    #unity-warning div {
+      padding: 10px 14px;
+      background: #dc2626;
+      color: #fff;
+    }
+  </style>
+</head>
+<body>
+  <div id="hud-bar">
+    <button class="hud-btn" id="btn-ab" onclick="openCloaked()">about:blank</button>
+    <button class="hud-btn" id="btn-fs" onclick="toggleFullscreen()">Fullscreen</button>
+  </div>
+
+  <div id="unity-container">
+    <canvas id="unity-canvas" width="960" height="600" tabindex="-1"></canvas>
+
+    <div id="unity-loading-bar">
+      <div id="loader-title">THE MAN FROM THE WINDOW 2</div>
+      <div id="loader-sub">Unity WebGL Port</div>
+      <div id="unity-progress-bar-empty">
+        <div id="unity-progress-bar-full"></div>
+      </div>
+      <div id="loader-status">Initializing...</div>
+    </div>
+
+    <div id="unity-warning"></div>
+  </div>
+
+  <script>
+    (function () {
+      "use strict";
+
+      const CDN_ROOT = "https://cdn.jsdelivr.net/gh/wasm-rip/the-man-from-the-window-2-web@main/man";
+      const BUILD_URL = `${CDN_ROOT}/Build`;
+      const DATA_PARTS = 7; // man.data.part1 .. man.data.part7
+      const WASM_PARTS = 2; // man.wasm.part1 .. man.wasm.part2
+
+      const canvas = document.querySelector("#unity-canvas");
+      const loadingBar = document.querySelector("#unity-loading-bar");
+      const progressBarFull = document.querySelector("#unity-progress-bar-full");
+      const statusText = document.querySelector("#loader-status");
+      const warningBanner = document.querySelector("#unity-warning");
+      let unityInstance = null;
+
+      // 1. Web Audio Auto-Unlock
+      const audioCtxs = [];
+      const OrigAudioContext = window.AudioContext || window.webkitAudioContext;
+      if (OrigAudioContext) {
+        const PatchedAudioContext = function (opts) {
+          const ctx = new OrigAudioContext(opts);
+          audioCtxs.push(ctx);
+          return ctx;
+        };
+        PatchedAudioContext.prototype = OrigAudioContext.prototype;
+        window.AudioContext = PatchedAudioContext;
+        if (window.webkitAudioContext) window.webkitAudioContext = PatchedAudioContext;
+
+        const resumeAll = () => {
+          audioCtxs.forEach((c) => {
+            if (c && c.state === "suspended") c.resume().catch(() => {});
+          });
+        };
+        window.addEventListener("pointerdown", resumeAll, { passive: true });
+        window.addEventListener("keydown", resumeAll, { passive: true });
+      }
+
+      // 2. Pointer Lock Error Guard
+      const origLock = Element.prototype.requestPointerLock || function () {};
+      Element.prototype.requestPointerLock = function () {
+        try {
+          const res = origLock.apply(this, arguments);
+          if (res && typeof res.catch === "function") res.catch(() => {});
+          return res;
+        } catch (e) {}
+      };
+
+      // 3. Banner & HUD Helpers
+      function unityShowBanner(msg, type) {
+        function updateBannerVisibility() {
+          warningBanner.style.display = warningBanner.children.length ? "block" : "none";
+        }
+        const div = document.createElement("div");
+        div.textContent = msg;
+        warningBanner.appendChild(div);
+        if (type === "error") {
+          div.style.background = "#dc2626";
+        } else {
+          if (type === "warning") div.style.background = "#ca8a04";
+          setTimeout(() => {
+            if (div.parentNode) warningBanner.removeChild(div);
+            updateBannerVisibility();
+          }, 5000);
+        }
+        updateBannerVisibility();
+      }
+
+      window.openCloaked = function () {
+        const btn = document.getElementById("btn-ab");
+        const win = window.open("about:blank", "_blank");
+        if (!win || win.closed) {
+          btn.textContent = "Allow Popups!";
+          setTimeout(() => { btn.textContent = "about:blank"; }, 3000);
+          return;
+        }
+        const clone = document.documentElement.cloneNode(true);
+        const ab = clone.querySelector("#btn-ab");
+        if (ab) ab.remove();
+        win.document.open();
+        win.document.write("<!DOCTYPE html>\n" + clone.outerHTML);
+        win.document.close();
+      };
+
+      window.toggleFullscreen = function () {
+        if (unityInstance && typeof unityInstance.SetFullscreen === "function") {
+          unityInstance.SetFullscreen(1);
+          return;
+        }
+        if (!document.fullscreenElement) {
+          document.documentElement.requestFullscreen().catch(() => {});
+        } else {
+          document.exitFullscreen().catch(() => {});
+        }
+      };
+
+      // 4. Parallel Chunk Downloader & Blob Reassembler
+      async function fetchAndStitch(prefix, count, mime, onChunkDone) {
+        const tasks = Array.from({ length: count }, (_, idx) => {
+          const url = `${BUILD_URL}/${prefix}.part${idx + 1}`;
+          return fetch(url).then((res) => {
+            if (!res.ok) throw new Error(`Failed to fetch ${prefix}.part${idx + 1} (HTTP ${res.status})`);
+            return res.arrayBuffer().then((buf) => {
+              onChunkDone();
+              return buf;
+            });
+          });
+        });
+        const buffers = await Promise.all(tasks);
+        return URL.createObjectURL(new Blob(buffers, { type: mime }));
+      }
+
+      // 5. Boot Unity WebGL
+      (async function boot() {
+        try {
+          const totalParts = DATA_PARTS + WASM_PARTS;
+          let completed = 0;
+
+          const updateDownloadProgress = () => {
+            completed++;
+            const pct = Math.round((completed / totalParts) * 70);
+            progressBarFull.style.width = `${pct}%`;
+            statusText.textContent = `Downloading game data (${completed}/${totalParts})...`;
+          };
+
+          statusText.textContent = `Downloading game data (0/${totalParts})...`;
+
+          const [dataBlobUrl, wasmBlobUrl] = await Promise.all([
+            fetchAndStitch("man.data", DATA_PARTS, "application/octet-stream", updateDownloadProgress),
+            fetchAndStitch("man.wasm", WASM_PARTS, "application/wasm", updateDownloadProgress)
+          ]);
+
+          statusText.textContent = "Loading Unity runtime...";
+          progressBarFull.style.width = "75%";
+
+          const config = {
+            arguments: [],
+            dataUrl: dataBlobUrl,
+            frameworkUrl: `${BUILD_URL}/man.framework.js`,
+            codeUrl: wasmBlobUrl,
+            streamingAssetsUrl: `${CDN_ROOT}/StreamingAssets`,
+            companyName: "Zed_Technician",
+            productName: "TheManFromTheWindow2",
+            productVersion: "0.9991",
+            showBanner: unityShowBanner
+          };
+
+          const script = document.createElement("script");
+          script.src = `${BUILD_URL}/man.loader.js`;
+          script.onload = () => {
+            createUnityInstance(canvas, config, (progress) => {
+              const pct = Math.round(75 + 25 * progress);
+              progressBarFull.style.width = `${pct}%`;
+              statusText.textContent = `Starting WebGL engine (${pct}%)...`;
+            }).then((instance) => {
+              unityInstance = instance;
+              URL.revokeObjectURL(dataBlobUrl);
+              URL.revokeObjectURL(wasmBlobUrl);
+              loadingBar.style.opacity = "0";
+              setTimeout(() => { loadingBar.style.display = "none"; }, 300);
+              canvas.focus();
+            }).catch((message) => {
+              unityShowBanner(String(message), "error");
+              statusText.textContent = "Engine failed to boot.";
+            });
+          };
+          script.onerror = () => {
+            unityShowBanner("Failed to load man.loader.js from jsDelivr.", "error");
+          };
+          document.body.appendChild(script);
+        } catch (err) {
+          console.error(err);
+          unityShowBanner(err.message || String(err), "error");
+          statusText.textContent = "Download failed.";
+        }
+      })();
+    })();
+  </script>
+</body>
+</html>
